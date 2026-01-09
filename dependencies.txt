@@ -1,0 +1,7 @@
+Python dependencies
+pip instal fastapi
+pip install uvicorn
+
+
+To run:
+uvicorn app:app --reload
