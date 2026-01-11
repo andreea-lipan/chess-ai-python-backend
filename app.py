@@ -1,5 +1,4 @@
-# -*- coding: utf-8 -*-
-"""Chess Position Detection API"""
+# === Chess Position Detection API ===
 
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,6 +15,7 @@ import logging
 import sys
 from datetime import datetime
 
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -26,6 +26,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
 # Configuration from environment variables
 ROBOFLOW_API_KEY = os.getenv("ROBOFLOW_API_KEY")
 CORNER_PROJECT = "chessboard-corner-detection"
@@ -34,15 +35,17 @@ PIECE_PROJECT = "chessv1-ghvlw"
 PIECE_VERSION = 3
 RECTIFIED_SIZE = (800, 800)
 
-# Log startup configuration (without exposing the key)
-logger.info("="*60)
+
+# Log startup configuration
+logger.info("=" * 60)
 logger.info("Chess Position Detection API Starting")
-logger.info("="*60)
+logger.info("=" * 60)
 logger.info(f"ROBOFLOW_API_KEY present: {bool(ROBOFLOW_API_KEY)}")
 logger.info(f"Corner Project: {CORNER_PROJECT} v{CORNER_VERSION}")
 logger.info(f"Piece Project: {PIECE_PROJECT} v{PIECE_VERSION}")
 logger.info(f"Rectified Size: {RECTIFIED_SIZE}")
-logger.info("="*60)
+logger.info("=" * 60)
+
 
 # Initialize FastAPI
 app = FastAPI(
@@ -51,69 +54,85 @@ app = FastAPI(
     version="1.0.0"
 )
 
+
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Adjust this in production
+    allow_origins=["*"],  # Adjust this in the future
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Response models
+
+# This is the response the API sends
+# The FEN config of the board
+# With the corresponding lichess url
 class ChessPositionResponse(BaseModel):
     fen: str
     lichess_url: str
     board_matrix: List[List[str]]
 
+
 # Global model cache
+# Note: for now the corner model is disabled, we are giving the corners manually to the API
+# We did not find a model accurate and consistent enough to detect the corners of the chess board
 _corner_model = None
 _piece_model = None
 
+
+
+'''
+    Load models with caching.
+'''
 def load_models():
-    """Load models with caching."""
     global _corner_model, _piece_model
-    
+
     logger.info("Loading Roboflow models...")
-    
+
     if _corner_model is None or _piece_model is None:
         if not ROBOFLOW_API_KEY:
             logger.error("ROBOFLOW_API_KEY environment variable not set!")
             raise ValueError("ROBOFLOW_API_KEY environment variable not set")
-        
+
         try:
             logger.info("Initializing Roboflow client...")
             rf = Roboflow(api_key=ROBOFLOW_API_KEY)
-            
-            logger.info(f"Loading corner detection model: {CORNER_PROJECT} v{CORNER_VERSION}")
-            _corner_model = rf.workspace().project(CORNER_PROJECT).version(CORNER_VERSION).model
-            
+
+            # logger.info(f"Loading corner detection model: {CORNER_PROJECT} v{CORNER_VERSION}")
+            # _corner_model = rf.workspace().project(CORNER_PROJECT).version(CORNER_VERSION).model
+
             logger.info(f"Loading piece detection model: {PIECE_PROJECT} v{PIECE_VERSION}")
             _piece_model = rf.workspace().project(PIECE_PROJECT).version(PIECE_VERSION).model
-            
+
             logger.info("✓ Models loaded successfully")
         except Exception as e:
             logger.error(f"Failed to load models: {str(e)}", exc_info=True)
             raise
     else:
         logger.info("Using cached models")
-    
+
     return _corner_model, _piece_model
 
+
+'''
+    Performs a board transformation. Crops the image based on the chess board corners.
+    Then tilts the image in such a way that the every square from the chess board is the same size.
+    This is done to make it easy to detect on what square a piece is located.
+'''
 def rectify_board(image_path, corners, output_size=RECTIFIED_SIZE):
-    """Performs perspective transform."""
     logger.info("Starting board rectification...")
     logger.info(f"Input corners: {corners}")
-    
+
     try:
         img = cv2.imread(image_path)
         if img is None:
             logger.error(f"Failed to read image from {image_path}")
             raise ValueError("Failed to read image")
-        
+
         logger.info(f"Image shape: {img.shape}")
-        
-        # Handle different corner formats
+
+        # Handle different corner formats (we can send them in two ways, this was mostly for testing)
         if isinstance(corners, dict):
             # Dictionary format: {topLeft: {x, y}, topRight: {x, y}, ...}
             logger.info("Detected dictionary corner format")
@@ -123,25 +142,27 @@ def rectify_board(image_path, corners, output_size=RECTIFIED_SIZE):
                 [corners['bottomRight']['x'], corners['bottomRight']['y']],
                 [corners['bottomLeft']['x'], corners['bottomLeft']['y']]
             ], dtype=np.float32)
+
         elif isinstance(corners, list):
             # Array format: [[x1, y1], [x2, y2], [x3, y3], [x4, y4]]
             logger.info("Detected array corner format")
             pts = np.array(corners, dtype=np.float32)
         else:
             raise ValueError(f"Unsupported corner format: {type(corners)}")
-        
+
         # Sort corners: TL, TR, BR, BL using sum and diff method
+        # To make sure they are in the correct order
         s = pts.sum(axis=1)
         d = np.diff(pts, axis=1).flatten()
-        
+
         tl = pts[np.argmin(s)]
         br = pts[np.argmax(s)]
         tr = pts[np.argmin(d)]
         bl = pts[np.argmax(d)]
-        
+
         pts_src = np.float32([tl, tr, br, bl])
         logger.info(f"Ordered corners - TL: {tl}, TR: {tr}, BR: {br}, BL: {bl}")
-        
+
         # Destination rectangle
         w, h = output_size
         pts_dst = np.float32([
@@ -150,28 +171,42 @@ def rectify_board(image_path, corners, output_size=RECTIFIED_SIZE):
             [w, h],
             [0, h]
         ])
-        
+
         # Compute transform matrix and warp
-        M = cv2.getPerspectiveTransform(pts_src, pts_dst)
-        warped = cv2.warpPerspective(img, M, (w, h))
-        
+        matrix = cv2.getPerspectiveTransform(pts_src, pts_dst)
+        warped = cv2.warpPerspective(img, matrix, (w, h))
+
+        # For local deploy, save the image in a folder to verify its accuracy in cropping.
+        # debug_path = os.path.join(
+        #     "/Users/andreea/UNI/Software Engineering/Sem 3/ITSG/chess-ai-python-backend/photos",
+        #     f"rectified_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.jpg"
+        # )
+        #
+        # cv2.imwrite(debug_path, warped)
+        # logger.info(f"✓ Rectified image saved to {debug_path}")
+
         # Save to temporary file
         with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp:
             cv2.imwrite(tmp.name, warped)
             logger.info(f"✓ Rectified image saved to {tmp.name}")
             return tmp.name
+
     except Exception as e:
         logger.error(f"Board rectification failed: {str(e)}", exc_info=True)
         raise
 
+
+
+'''
+    Uses an AI model to detect the chess pieces.
+'''
 def detect_pieces(piece_model, rectified_path):
-    """Detects chess pieces."""
     logger.info("Starting piece detection...")
-    
+
     try:
         results = piece_model.predict(rectified_path, confidence=25).json()
         logger.info(f"Piece detection complete: {len(results['predictions'])} pieces found")
-        
+
         # Class mapping
         class_map = {
             0: "Black-Bishop",
@@ -187,71 +222,85 @@ def detect_pieces(piece_model, rectified_path):
             10: "White-Queen",
             11: "White-Rook",
         }
-        
+
         # Add class names to predictions
         for i, res in enumerate(results["predictions"]):
             class_id = res['class']
             if isinstance(class_id, str) and class_id.isdigit():
                 class_id = int(class_id)
-            
+
             if isinstance(class_id, int) and class_id in class_map:
                 res['class_name'] = class_map[class_id]
-                logger.debug(f"Piece {i+1}: {class_map[class_id]} at ({res['x']:.1f}, {res['y']:.1f})")
+                logger.debug(f"Piece {i + 1}: {class_map[class_id]} at ({res['x']:.1f}, {res['y']:.1f})")
             else:
                 res['class_name'] = f"Unknown-{class_id}"
                 logger.warning(f"Unknown class ID: {class_id}")
-        
+
         logger.info("✓ Piece detection complete")
         return results["predictions"]
     except Exception as e:
         logger.error(f"Piece detection failed: {str(e)}", exc_info=True)
         raise
 
+
+
+'''
+    Convert detections to an 8x8 board matrix.
+    Figure out on what square is piece on the board.
+'''
 def map_pieces_to_grid(predictions, board_size=800, grid=8):
-    """Convert detections to an 8x8 board matrix."""
+
     logger.info("Mapping pieces to grid...")
     cell = board_size / grid
     board = [["empty" for _ in range(grid)] for _ in range(grid)]
-    
+
     mapped_count = 0
     out_of_bounds_count = 0
-    
+
     for p in predictions:
         px, py = p["x"], p["y"]
         col = int(px // cell)
         row = int(py // cell)
-        
+
         piece_name = p.get('class_name', p.get('class', 'Unknown'))
-        
+
         if 0 <= row < 8 and 0 <= col < 8:
             board[row][col] = piece_name
             mapped_count += 1
         else:
             logger.warning(f"Piece {piece_name} at ({px:.1f}, {py:.1f}) -> grid[{row}][{col}] OUT OF BOUNDS")
             out_of_bounds_count += 1
-    
+
     logger.info(f"✓ Mapped {mapped_count} pieces to grid, {out_of_bounds_count} out of bounds")
     return board
 
+
+
+'''
+    Convert piece labels to FEN symbols. This is needed for the lichess link.
+'''
 def label_to_symbol(label):
-    """Convert piece labels to FEN symbols."""
     if label == "empty":
         return None
-    
+
     mapping = {
         "White-Pawn": "P", "White-Knight": "N", "White-Bishop": "B",
         "White-Rook": "R", "White-Queen": "Q", "White-King": "K",
         "Black-Pawn": "p", "Black-Knight": "n", "Black-Bishop": "b",
         "Black-Rook": "r", "Black-Queen": "q", "Black-King": "k",
     }
-    
+
     return mapping.get(label, None)
 
+
+
+'''
+    Convert board matrix to FEN string.
+'''
 def board_to_fen(board_matrix):
-    """Convert board matrix to FEN string."""
     logger.info("Converting board to FEN...")
     board = chess.Board(None)
-    
+
     piece_count = 0
     for r in range(8):
         for c in range(8):
@@ -261,127 +310,75 @@ def board_to_fen(board_matrix):
                 sq = chess.square(c, 7 - r)
                 board.set_piece_at(sq, chess.Piece.from_symbol(symbol))
                 piece_count += 1
-    
+
     fen = board.fen()
     logger.info(f"✓ FEN generated with {piece_count} pieces: {fen}")
     return fen
 
+
+
+'''
+    Convert FEN to Lichess URL.
+'''
 def fen_to_lichess_url(fen):
-    """Convert FEN to Lichess editor URL."""
     return "https://lichess.org/editor/" + fen.replace(" ", "_")
 
+
+
+# ============================= API ENDPOINTS =============================
+
+
+'''
+    Base test endpoint.
+'''
 @app.get("/")
 async def root():
-    """Health check endpoint."""
     return {
         "status": "ok",
         "message": "Chess Position Detection API is running",
         "version": "1.0.0"
     }
 
-@app.post("/debug/image")
-async def debug_image(image: UploadFile = File(...)):
-    """
-    Debug endpoint to verify image upload.
-    Returns image metadata and allows you to download it back.
-    """
-    from fastapi.responses import StreamingResponse
-    import io
-    
-    logger.info("="*60)
-    logger.info("DEBUG IMAGE UPLOAD")
-    logger.info("="*60)
-    
-    try:
-        # Read image
-        content = await image.read()
-        
-        # Log metadata
-        metadata = {
-            "filename": image.filename,
-            "content_type": image.content_type,
-            "size_bytes": len(content),
-            "size_kb": round(len(content) / 1024, 2),
-            "size_mb": round(len(content) / (1024 * 1024), 2)
-        }
-        
-        logger.info(f"Filename: {metadata['filename']}")
-        logger.info(f"Content-Type: {metadata['content_type']}")
-        logger.info(f"Size: {metadata['size_bytes']} bytes ({metadata['size_kb']} KB)")
-        
-        # Try to load with OpenCV
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp:
-            tmp.write(content)
-            tmp_path = tmp.name
-        
-        try:
-            img = cv2.imread(tmp_path)
-            if img is not None:
-                metadata["opencv_loaded"] = True
-                metadata["image_shape"] = img.shape
-                metadata["width"] = img.shape[1]
-                metadata["height"] = img.shape[0]
-                metadata["channels"] = img.shape[2] if len(img.shape) > 2 else 1
-                metadata["dtype"] = str(img.dtype)
-                
-                logger.info(f"✓ OpenCV loaded successfully")
-                logger.info(f"  Dimensions: {metadata['width']}x{metadata['height']}")
-                logger.info(f"  Channels: {metadata['channels']}")
-            else:
-                metadata["opencv_loaded"] = False
-                metadata["error"] = "OpenCV could not decode the image"
-                logger.error("✗ OpenCV failed to load image")
-        except Exception as e:
-            metadata["opencv_loaded"] = False
-            metadata["error"] = str(e)
-            logger.error(f"✗ Error loading with OpenCV: {e}")
-        finally:
-            os.unlink(tmp_path)
-        
-        logger.info("="*60)
-        
-        # Return both metadata and the image itself
-        return {
-            "status": "success",
-            "metadata": metadata,
-            "note": "Image received successfully. Check logs for detailed analysis."
-        }
-        
-    except Exception as e:
-        logger.error(f"Debug endpoint error: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/detect", response_model=ChessPositionResponse)
-async def detect_chess_position(
-    image: UploadFile = File(...),
-    corners: str = Form(...)
-):
-    """
+
+'''
     Detect chess position from image.
-    
+
     Args:
         image: Chess board image file
         corners: JSON string of corner coordinates, e.g. "[[x1,y1], [x2,y2], [x3,y3], [x4,y4]]"
-    
+        original_width: Optional - Original image width if coordinates are from a different resolution
+        original_height: Optional - Original image height if coordinates are from a different resolution
+
     Returns:
         ChessPositionResponse with FEN, Lichess URL, and board matrix
-    """
+'''
+@app.post("/detect", response_model=ChessPositionResponse)
+async def detect_chess_position(
+        image: UploadFile = File(...),
+        corners: str = Form(...),
+        original_width: int = Form(None),
+        original_height: int = Form(None)
+):
+
     request_id = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    logger.info("="*60)
+    logger.info("=" * 60)
     logger.info(f"NEW REQUEST [{request_id}]")
-    logger.info("="*60)
+    logger.info("=" * 60)
     logger.info(f"Image filename: {image.filename}")
     logger.info(f"Image content type: {image.content_type}")
     logger.info(f"Corners received: {corners}")
-    
+    logger.info(
+        f"Original dimensions provided: {original_width}x{original_height}" if original_width else "No original dimensions provided")
+
     temp_files = []
-    
+
     try:
         # Parse corners
         try:
             logger.info("Parsing corner coordinates...")
             corner_coords = json.loads(corners)
-            
+
             # Validate corner format
             if isinstance(corner_coords, dict):
                 # Dictionary format
@@ -392,6 +389,7 @@ async def detect_chess_position(
                     if not ('x' in corner_coords[key] and 'y' in corner_coords[key]):
                         raise ValueError(f"{key} must have 'x' and 'y' properties")
                 logger.info(f"✓ Parsed corners in dictionary format")
+
             elif isinstance(corner_coords, list):
                 # Array format
                 if len(corner_coords) != 4:
@@ -399,11 +397,12 @@ async def detect_chess_position(
                 logger.info(f"✓ Parsed {len(corner_coords)} corners in array format")
             else:
                 raise ValueError("Corners must be either a dictionary or an array")
-                
+
         except json.JSONDecodeError as e:
             logger.error(f"Invalid JSON format for corners: {str(e)}")
             raise HTTPException(status_code=400, detail="Invalid JSON format for corners")
-        
+
+
         # Save uploaded image to temporary file
         logger.info("Saving uploaded image...")
         with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp:
@@ -413,60 +412,100 @@ async def detect_chess_position(
             image_path = tmp.name
             temp_files.append(image_path)
             logger.info(f"✓ Image saved to {image_path}")
-        
-        # Optional: Log image properties for debugging
+
+
+        # Resize the image to be the same as the size it was sent at
+        # Log image properties for debugging
         try:
             img_check = cv2.imread(image_path)
             if img_check is not None:
+                actual_height, actual_width = img_check.shape[:2]
                 logger.info(f"Image successfully loaded - Shape: {img_check.shape}, Dtype: {img_check.dtype}")
-                logger.info(f"Image dimensions: {img_check.shape[1]}x{img_check.shape[0]} pixels")
+                logger.info(f"Actual image dimensions: {actual_width}x{actual_height} pixels")
                 logger.info(f"Color channels: {img_check.shape[2] if len(img_check.shape) > 2 else 1}")
+
+                # Resize image if original dimensions are provided and different
+                logger.info(f"Original image dimensions: {original_width}x{original_height} pixels")
+                logger.info(f"Actual image dimensions: {actual_width}x{actual_height} pixels")
+                if original_width and original_height:
+                    if original_width != actual_width or original_height != actual_height:
+                        logger.info(
+                            f"Resizing image from {actual_width}x{actual_height} to {original_width}x{original_height}")
+                        logger.info("This ensures corner coordinates match the image dimensions")
+
+                        # Resize the image to match the original dimensions
+                        resized_img = cv2.resize(img_check, (original_width, original_height),
+                                                 interpolation=cv2.INTER_LANCZOS4)
+
+                        # Save the resized image back
+                        cv2.imwrite(image_path, resized_img)
+
+                        debug_path = os.path.join(
+                            "/Users/andreea/UNI/Software Engineering/Sem 3/ITSG/chess-ai-python-backend/photos",
+                            f"resized_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.jpg"
+                        )
+
+                        cv2.imwrite(debug_path, resized_img)
+                        logger.info(f"✓ Resized image saved to {debug_path}")
+
+                        logger.info(f"✓ Image resized successfully to {original_width}x{original_height}")
+                        logger.info(f"Corners will now match the resized image dimensions")
+                    else:
+                        logger.info("Original dimensions match actual dimensions - no resizing needed")
+                else:
+                    logger.info("No original dimensions provided - using image as-is")
+                    logger.warning("⚠️ If corners don't match, provide original_width and original_height!")
             else:
                 logger.error(f"⚠️ OpenCV failed to read the uploaded image at {image_path}")
         except Exception as img_err:
-            logger.warning(f"Could not inspect image properties: {img_err}")
-        
+            logger.warning(f"Could not inspect/resize image: {img_err}")
+
+
+
+        # ============= MAIN ALG STEPS =============
+
+
         # Load models
         corner_model, piece_model = load_models()
-        
+
         # Rectify board
         rectified_path = rectify_board(image_path, corner_coords)
         temp_files.append(rectified_path)
-        
+
         # Detect pieces
         piece_preds = detect_pieces(piece_model, rectified_path)
-        
+
         # Map to 8x8 grid
         grid = map_pieces_to_grid(piece_preds)
-        
+
         # Convert to FEN
         fen = board_to_fen(grid)
-        
+
         # Generate Lichess URL
         url = fen_to_lichess_url(fen)
-        
-        logger.info("="*60)
+
+        logger.info("=" * 60)
         logger.info(f"SUCCESS [{request_id}]")
         logger.info(f"FEN: {fen}")
         logger.info(f"URL: {url}")
-        logger.info("="*60)
-        
+        logger.info("=" * 60)
+
         return ChessPositionResponse(
             fen=fen,
             lichess_url=url,
             board_matrix=grid
         )
-    
+
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("="*60)
+        logger.error("=" * 60)
         logger.error(f"ERROR [{request_id}]")
         logger.error(f"Exception type: {type(e).__name__}")
         logger.error(f"Exception message: {str(e)}")
-        logger.error("="*60, exc_info=True)
+        logger.error("=" * 60, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
-    
+
     finally:
         # Clean up temporary files
         logger.info("Cleaning up temporary files...")
@@ -478,6 +517,8 @@ async def detect_chess_position(
             except Exception as e:
                 logger.warning(f"Failed to delete {temp_file}: {str(e)}")
 
-# if __name__ == "__main__":
-#     import uvicorn
-#     uvicorn.run(app, host="0.0.0.0", port=8000)
+
+# for running locally uncomment this and use your devices local IP addr
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="192.168.0.214", port=8000)
