@@ -279,6 +279,78 @@ async def root():
         "version": "1.0.0"
     }
 
+@app.post("/debug/image")
+async def debug_image(image: UploadFile = File(...)):
+    """
+    Debug endpoint to verify image upload.
+    Returns image metadata and allows you to download it back.
+    """
+    from fastapi.responses import StreamingResponse
+    import io
+    
+    logger.info("="*60)
+    logger.info("DEBUG IMAGE UPLOAD")
+    logger.info("="*60)
+    
+    try:
+        # Read image
+        content = await image.read()
+        
+        # Log metadata
+        metadata = {
+            "filename": image.filename,
+            "content_type": image.content_type,
+            "size_bytes": len(content),
+            "size_kb": round(len(content) / 1024, 2),
+            "size_mb": round(len(content) / (1024 * 1024), 2)
+        }
+        
+        logger.info(f"Filename: {metadata['filename']}")
+        logger.info(f"Content-Type: {metadata['content_type']}")
+        logger.info(f"Size: {metadata['size_bytes']} bytes ({metadata['size_kb']} KB)")
+        
+        # Try to load with OpenCV
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp:
+            tmp.write(content)
+            tmp_path = tmp.name
+        
+        try:
+            img = cv2.imread(tmp_path)
+            if img is not None:
+                metadata["opencv_loaded"] = True
+                metadata["image_shape"] = img.shape
+                metadata["width"] = img.shape[1]
+                metadata["height"] = img.shape[0]
+                metadata["channels"] = img.shape[2] if len(img.shape) > 2 else 1
+                metadata["dtype"] = str(img.dtype)
+                
+                logger.info(f"✓ OpenCV loaded successfully")
+                logger.info(f"  Dimensions: {metadata['width']}x{metadata['height']}")
+                logger.info(f"  Channels: {metadata['channels']}")
+            else:
+                metadata["opencv_loaded"] = False
+                metadata["error"] = "OpenCV could not decode the image"
+                logger.error("✗ OpenCV failed to load image")
+        except Exception as e:
+            metadata["opencv_loaded"] = False
+            metadata["error"] = str(e)
+            logger.error(f"✗ Error loading with OpenCV: {e}")
+        finally:
+            os.unlink(tmp_path)
+        
+        logger.info("="*60)
+        
+        # Return both metadata and the image itself
+        return {
+            "status": "success",
+            "metadata": metadata,
+            "note": "Image received successfully. Check logs for detailed analysis."
+        }
+        
+    except Exception as e:
+        logger.error(f"Debug endpoint error: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/detect", response_model=ChessPositionResponse)
 async def detect_chess_position(
     image: UploadFile = File(...),
@@ -341,6 +413,18 @@ async def detect_chess_position(
             image_path = tmp.name
             temp_files.append(image_path)
             logger.info(f"✓ Image saved to {image_path}")
+        
+        # Optional: Log image properties for debugging
+        try:
+            img_check = cv2.imread(image_path)
+            if img_check is not None:
+                logger.info(f"Image successfully loaded - Shape: {img_check.shape}, Dtype: {img_check.dtype}")
+                logger.info(f"Image dimensions: {img_check.shape[1]}x{img_check.shape[0]} pixels")
+                logger.info(f"Color channels: {img_check.shape[2] if len(img_check.shape) > 2 else 1}")
+            else:
+                logger.error(f"⚠️ OpenCV failed to read the uploaded image at {image_path}")
+        except Exception as img_err:
+            logger.warning(f"Could not inspect image properties: {img_err}")
         
         # Load models
         corner_model, piece_model = load_models()
