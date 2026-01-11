@@ -1,2 +1,5 @@
 fastapi
 uvicorn
+roboflow
+chess
+numpy
