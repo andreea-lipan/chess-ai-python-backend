@@ -12,6 +12,19 @@ import tempfile
 from typing import List
 import json
 from pydantic import BaseModel
+import logging
+import sys
+from datetime import datetime
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # Configuration from environment variables
 ROBOFLOW_API_KEY = os.getenv("ROBOFLOW_API_KEY")
@@ -20,6 +33,16 @@ CORNER_VERSION = 1
 PIECE_PROJECT = "chessv1-ghvlw"
 PIECE_VERSION = 3
 RECTIFIED_SIZE = (800, 800)
+
+# Log startup configuration (without exposing the key)
+logger.info("="*60)
+logger.info("Chess Position Detection API Starting")
+logger.info("="*60)
+logger.info(f"ROBOFLOW_API_KEY present: {bool(ROBOFLOW_API_KEY)}")
+logger.info(f"Corner Project: {CORNER_PROJECT} v{CORNER_VERSION}")
+logger.info(f"Piece Project: {PIECE_PROJECT} v{PIECE_VERSION}")
+logger.info(f"Rectified Size: {RECTIFIED_SIZE}")
+logger.info("="*60)
 
 # Initialize FastAPI
 app = FastAPI(
@@ -51,89 +74,133 @@ def load_models():
     """Load models with caching."""
     global _corner_model, _piece_model
     
+    logger.info("Loading Roboflow models...")
+    
     if _corner_model is None or _piece_model is None:
         if not ROBOFLOW_API_KEY:
+            logger.error("ROBOFLOW_API_KEY environment variable not set!")
             raise ValueError("ROBOFLOW_API_KEY environment variable not set")
         
-        rf = Roboflow(api_key=ROBOFLOW_API_KEY)
-        _corner_model = rf.workspace().project(CORNER_PROJECT).version(CORNER_VERSION).model
-        _piece_model = rf.workspace().project(PIECE_PROJECT).version(PIECE_VERSION).model
+        try:
+            logger.info("Initializing Roboflow client...")
+            rf = Roboflow(api_key=ROBOFLOW_API_KEY)
+            
+            logger.info(f"Loading corner detection model: {CORNER_PROJECT} v{CORNER_VERSION}")
+            _corner_model = rf.workspace().project(CORNER_PROJECT).version(CORNER_VERSION).model
+            
+            logger.info(f"Loading piece detection model: {PIECE_PROJECT} v{PIECE_VERSION}")
+            _piece_model = rf.workspace().project(PIECE_PROJECT).version(PIECE_VERSION).model
+            
+            logger.info("✓ Models loaded successfully")
+        except Exception as e:
+            logger.error(f"Failed to load models: {str(e)}", exc_info=True)
+            raise
+    else:
+        logger.info("Using cached models")
     
     return _corner_model, _piece_model
 
 def rectify_board(image_path, corners, output_size=RECTIFIED_SIZE):
     """Performs perspective transform."""
-    img = cv2.imread(image_path)
+    logger.info("Starting board rectification...")
+    logger.info(f"Input corners: {corners}")
     
-    # Extract corner coordinates
-    pts = np.array(corners, dtype=np.float32)
-    
-    # Sort corners: TL, TR, BR, BL using sum and diff method
-    s = pts.sum(axis=1)
-    d = np.diff(pts, axis=1).flatten()
-    
-    tl = pts[np.argmin(s)]
-    br = pts[np.argmax(s)]
-    tr = pts[np.argmin(d)]
-    bl = pts[np.argmax(d)]
-    
-    pts_src = np.float32([tl, tr, br, bl])
-    
-    # Destination rectangle
-    w, h = output_size
-    pts_dst = np.float32([
-        [0, 0],
-        [w, 0],
-        [w, h],
-        [0, h]
-    ])
-    
-    # Compute transform matrix and warp
-    M = cv2.getPerspectiveTransform(pts_src, pts_dst)
-    warped = cv2.warpPerspective(img, M, (w, h))
-    
-    # Save to temporary file
-    with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp:
-        cv2.imwrite(tmp.name, warped)
-        return tmp.name
+    try:
+        img = cv2.imread(image_path)
+        if img is None:
+            logger.error(f"Failed to read image from {image_path}")
+            raise ValueError("Failed to read image")
+        
+        logger.info(f"Image shape: {img.shape}")
+        
+        # Extract corner coordinates
+        pts = np.array(corners, dtype=np.float32)
+        
+        # Sort corners: TL, TR, BR, BL using sum and diff method
+        s = pts.sum(axis=1)
+        d = np.diff(pts, axis=1).flatten()
+        
+        tl = pts[np.argmin(s)]
+        br = pts[np.argmax(s)]
+        tr = pts[np.argmin(d)]
+        bl = pts[np.argmax(d)]
+        
+        pts_src = np.float32([tl, tr, br, bl])
+        logger.info(f"Ordered corners - TL: {tl}, TR: {tr}, BR: {br}, BL: {bl}")
+        
+        # Destination rectangle
+        w, h = output_size
+        pts_dst = np.float32([
+            [0, 0],
+            [w, 0],
+            [w, h],
+            [0, h]
+        ])
+        
+        # Compute transform matrix and warp
+        M = cv2.getPerspectiveTransform(pts_src, pts_dst)
+        warped = cv2.warpPerspective(img, M, (w, h))
+        
+        # Save to temporary file
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp:
+            cv2.imwrite(tmp.name, warped)
+            logger.info(f"✓ Rectified image saved to {tmp.name}")
+            return tmp.name
+    except Exception as e:
+        logger.error(f"Board rectification failed: {str(e)}", exc_info=True)
+        raise
 
 def detect_pieces(piece_model, rectified_path):
     """Detects chess pieces."""
-    results = piece_model.predict(rectified_path, confidence=25).json()
+    logger.info("Starting piece detection...")
     
-    # Class mapping
-    class_map = {
-        0: "Black-Bishop",
-        1: "Black-King",
-        2: "Black-Knight",
-        3: "Black-Pawn",
-        4: "Black-Queen",
-        5: "Black-Rook",
-        6: "White-Bishop",
-        7: "White-King",
-        8: "White-Knight",
-        9: "White-Pawn",
-        10: "White-Queen",
-        11: "White-Rook",
-    }
-    
-    # Add class names to predictions
-    for res in results["predictions"]:
-        class_id = res['class']
-        if isinstance(class_id, str) and class_id.isdigit():
-            class_id = int(class_id)
+    try:
+        results = piece_model.predict(rectified_path, confidence=25).json()
+        logger.info(f"Piece detection complete: {len(results['predictions'])} pieces found")
         
-        if isinstance(class_id, int) and class_id in class_map:
-            res['class_name'] = class_map[class_id]
-        else:
-            res['class_name'] = f"Unknown-{class_id}"
-    
-    return results["predictions"]
+        # Class mapping
+        class_map = {
+            0: "Black-Bishop",
+            1: "Black-King",
+            2: "Black-Knight",
+            3: "Black-Pawn",
+            4: "Black-Queen",
+            5: "Black-Rook",
+            6: "White-Bishop",
+            7: "White-King",
+            8: "White-Knight",
+            9: "White-Pawn",
+            10: "White-Queen",
+            11: "White-Rook",
+        }
+        
+        # Add class names to predictions
+        for i, res in enumerate(results["predictions"]):
+            class_id = res['class']
+            if isinstance(class_id, str) and class_id.isdigit():
+                class_id = int(class_id)
+            
+            if isinstance(class_id, int) and class_id in class_map:
+                res['class_name'] = class_map[class_id]
+                logger.debug(f"Piece {i+1}: {class_map[class_id]} at ({res['x']:.1f}, {res['y']:.1f})")
+            else:
+                res['class_name'] = f"Unknown-{class_id}"
+                logger.warning(f"Unknown class ID: {class_id}")
+        
+        logger.info("✓ Piece detection complete")
+        return results["predictions"]
+    except Exception as e:
+        logger.error(f"Piece detection failed: {str(e)}", exc_info=True)
+        raise
 
 def map_pieces_to_grid(predictions, board_size=800, grid=8):
     """Convert detections to an 8x8 board matrix."""
+    logger.info("Mapping pieces to grid...")
     cell = board_size / grid
     board = [["empty" for _ in range(grid)] for _ in range(grid)]
+    
+    mapped_count = 0
+    out_of_bounds_count = 0
     
     for p in predictions:
         px, py = p["x"], p["y"]
@@ -144,7 +211,12 @@ def map_pieces_to_grid(predictions, board_size=800, grid=8):
         
         if 0 <= row < 8 and 0 <= col < 8:
             board[row][col] = piece_name
+            mapped_count += 1
+        else:
+            logger.warning(f"Piece {piece_name} at ({px:.1f}, {py:.1f}) -> grid[{row}][{col}] OUT OF BOUNDS")
+            out_of_bounds_count += 1
     
+    logger.info(f"✓ Mapped {mapped_count} pieces to grid, {out_of_bounds_count} out of bounds")
     return board
 
 def label_to_symbol(label):
@@ -163,8 +235,10 @@ def label_to_symbol(label):
 
 def board_to_fen(board_matrix):
     """Convert board matrix to FEN string."""
+    logger.info("Converting board to FEN...")
     board = chess.Board(None)
     
+    piece_count = 0
     for r in range(8):
         for c in range(8):
             piece = board_matrix[r][c]
@@ -172,8 +246,11 @@ def board_to_fen(board_matrix):
             if symbol:
                 sq = chess.square(c, 7 - r)
                 board.set_piece_at(sq, chess.Piece.from_symbol(symbol))
+                piece_count += 1
     
-    return board.fen()
+    fen = board.fen()
+    logger.info(f"✓ FEN generated with {piece_count} pieces: {fen}")
+    return fen
 
 def fen_to_lichess_url(fen):
     """Convert FEN to Lichess editor URL."""
@@ -203,23 +280,37 @@ async def detect_chess_position(
     Returns:
         ChessPositionResponse with FEN, Lichess URL, and board matrix
     """
+    request_id = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    logger.info("="*60)
+    logger.info(f"NEW REQUEST [{request_id}]")
+    logger.info("="*60)
+    logger.info(f"Image filename: {image.filename}")
+    logger.info(f"Image content type: {image.content_type}")
+    logger.info(f"Corners received: {corners}")
+    
     temp_files = []
     
     try:
         # Parse corners
         try:
+            logger.info("Parsing corner coordinates...")
             corner_coords = json.loads(corners)
             if len(corner_coords) != 4:
                 raise ValueError("Must provide exactly 4 corner coordinates")
-        except json.JSONDecodeError:
+            logger.info(f"✓ Parsed {len(corner_coords)} corners")
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON format for corners: {str(e)}")
             raise HTTPException(status_code=400, detail="Invalid JSON format for corners")
         
         # Save uploaded image to temporary file
+        logger.info("Saving uploaded image...")
         with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp:
             content = await image.read()
+            logger.info(f"Image size: {len(content)} bytes")
             tmp.write(content)
             image_path = tmp.name
             temp_files.append(image_path)
+            logger.info(f"✓ Image saved to {image_path}")
         
         # Load models
         corner_model, piece_model = load_models()
@@ -240,23 +331,38 @@ async def detect_chess_position(
         # Generate Lichess URL
         url = fen_to_lichess_url(fen)
         
+        logger.info("="*60)
+        logger.info(f"SUCCESS [{request_id}]")
+        logger.info(f"FEN: {fen}")
+        logger.info(f"URL: {url}")
+        logger.info("="*60)
+        
         return ChessPositionResponse(
             fen=fen,
             lichess_url=url,
             board_matrix=grid
         )
     
+    except HTTPException:
+        raise
     except Exception as e:
+        logger.error("="*60)
+        logger.error(f"ERROR [{request_id}]")
+        logger.error(f"Exception type: {type(e).__name__}")
+        logger.error(f"Exception message: {str(e)}")
+        logger.error("="*60, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
     
     finally:
         # Clean up temporary files
+        logger.info("Cleaning up temporary files...")
         for temp_file in temp_files:
             try:
                 if os.path.exists(temp_file):
                     os.unlink(temp_file)
-            except Exception:
-                pass
+                    logger.debug(f"Deleted {temp_file}")
+            except Exception as e:
+                logger.warning(f"Failed to delete {temp_file}: {str(e)}")
 
 # if __name__ == "__main__":
 #     import uvicorn
