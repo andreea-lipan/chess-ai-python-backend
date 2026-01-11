@@ -1,5 +1,8 @@
 fastapi
 uvicorn
+python-multipart
 roboflow
-chess
+opencv-python-headless
 numpy
+scikit-learn
+python-chess
