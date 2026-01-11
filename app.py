@@ -113,8 +113,22 @@ def rectify_board(image_path, corners, output_size=RECTIFIED_SIZE):
         
         logger.info(f"Image shape: {img.shape}")
         
-        # Extract corner coordinates
-        pts = np.array(corners, dtype=np.float32)
+        # Handle different corner formats
+        if isinstance(corners, dict):
+            # Dictionary format: {topLeft: {x, y}, topRight: {x, y}, ...}
+            logger.info("Detected dictionary corner format")
+            pts = np.array([
+                [corners['topLeft']['x'], corners['topLeft']['y']],
+                [corners['topRight']['x'], corners['topRight']['y']],
+                [corners['bottomRight']['x'], corners['bottomRight']['y']],
+                [corners['bottomLeft']['x'], corners['bottomLeft']['y']]
+            ], dtype=np.float32)
+        elif isinstance(corners, list):
+            # Array format: [[x1, y1], [x2, y2], [x3, y3], [x4, y4]]
+            logger.info("Detected array corner format")
+            pts = np.array(corners, dtype=np.float32)
+        else:
+            raise ValueError(f"Unsupported corner format: {type(corners)}")
         
         # Sort corners: TL, TR, BR, BL using sum and diff method
         s = pts.sum(axis=1)
@@ -295,9 +309,25 @@ async def detect_chess_position(
         try:
             logger.info("Parsing corner coordinates...")
             corner_coords = json.loads(corners)
-            if len(corner_coords) != 4:
-                raise ValueError("Must provide exactly 4 corner coordinates")
-            logger.info(f"✓ Parsed {len(corner_coords)} corners")
+            
+            # Validate corner format
+            if isinstance(corner_coords, dict):
+                # Dictionary format
+                required_keys = ['topLeft', 'topRight', 'bottomRight', 'bottomLeft']
+                if not all(key in corner_coords for key in required_keys):
+                    raise ValueError(f"Dictionary format must include: {required_keys}")
+                for key in required_keys:
+                    if not ('x' in corner_coords[key] and 'y' in corner_coords[key]):
+                        raise ValueError(f"{key} must have 'x' and 'y' properties")
+                logger.info(f"✓ Parsed corners in dictionary format")
+            elif isinstance(corner_coords, list):
+                # Array format
+                if len(corner_coords) != 4:
+                    raise ValueError("Array format must provide exactly 4 corner coordinates")
+                logger.info(f"✓ Parsed {len(corner_coords)} corners in array format")
+            else:
+                raise ValueError("Corners must be either a dictionary or an array")
+                
         except json.JSONDecodeError as e:
             logger.error(f"Invalid JSON format for corners: {str(e)}")
             raise HTTPException(status_code=400, detail="Invalid JSON format for corners")
