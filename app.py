@@ -31,8 +31,9 @@ logger = logging.getLogger(__name__)
 ROBOFLOW_API_KEY = os.getenv("ROBOFLOW_API_KEY")
 CORNER_PROJECT = "chessboard-corner-detection"
 CORNER_VERSION = 1
-PIECE_PROJECT = "chessv1-ghvlw"
-PIECE_VERSION = 3
+# PIECE_PROJECT = "chessv1-ghvlw". # AI Alg 1
+PIECE_PROJECT = "chess-piece-vrw2r" # AI Alg 2
+PIECE_VERSION = 7
 RECTIFIED_SIZE = (800, 800)
 
 
@@ -204,32 +205,49 @@ def detect_pieces(piece_model, rectified_path):
     logger.info("Starting piece detection...")
 
     try:
-        results = piece_model.predict(rectified_path, confidence=25).json()
+        results = piece_model.predict(rectified_path, confidence=30).json()
         logger.info(f"Piece detection complete: {len(results['predictions'])} pieces found")
 
-        # Class mapping
+        # Class mapping for AI alg 1
+        # class_map = {
+        #     0: "Black-Bishop",
+        #     1: "Black-King",
+        #     2: "Black-Knight",
+        #     3: "Black-Pawn",
+        #     4: "Black-Queen",
+        #     5: "Black-Rook",
+        #     6: "White-Bishop",
+        #     7: "White-King",
+        #     8: "White-Knight",
+        #     9: "White-Pawn",
+        #     10: "White-Queen",
+        #     11: "White-Rook",
+        # }
+
+        # Class mapping for AI alg 2
         class_map = {
-            0: "Black-Bishop",
-            1: "Black-King",
-            2: "Black-Knight",
-            3: "Black-Pawn",
-            4: "Black-Queen",
-            5: "Black-Rook",
-            6: "White-Bishop",
-            7: "White-King",
-            8: "White-Knight",
-            9: "White-Pawn",
-            10: "White-Queen",
-            11: "White-Rook",
+            "Black-bishop": "Black-Bishop",
+            "Black-king": "Black-King",
+            "Black-horse": "Black-Knight",
+            "Black-pawn": "Black-Pawn",
+            "Black-queen": "Black-Queen",
+            "Black-rook": "Black-Rook",
+            "White-bishop": "White-Bishop",
+            "White-king": "White-King",
+            "White-horse": "White-Knight",
+            "White-pawn": "White-Pawn",
+            "White-queen": "White-Queen",
+            "White-rook": "White-Rook",
         }
 
         # Add class names to predictions
         for i, res in enumerate(results["predictions"]):
             class_id = res['class']
-            if isinstance(class_id, str) and class_id.isdigit():
-                class_id = int(class_id)
+            # Code req for AI alg 1 mapping bc it's not strings
+            # if isinstance(class_id, str) and class_id.isdigit():
+            #     class_id = int(class_id)
 
-            if isinstance(class_id, int) and class_id in class_map:
+            if isinstance(class_id, str) and class_id in class_map:
                 res['class_name'] = class_map[class_id]
                 logger.debug(f"Piece {i + 1}: {class_map[class_id]} at ({res['x']:.1f}, {res['y']:.1f})")
             else:
@@ -519,6 +537,6 @@ async def detect_chess_position(
 
 
 # for running locally uncomment this and use your devices local IP addr
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="192.168.0.214", port=8000)
+# if __name__ == "__main__":
+#     import uvicorn
+#     uvicorn.run(app, host="192.168.0.214", port=8000)
