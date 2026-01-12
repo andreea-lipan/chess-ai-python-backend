@@ -1,9 +1,0 @@
-Python dependencies
-pip instal fastapi
-pip install uvicorn
-
-
-To run:
-uvicorn app:app --reload
-
-requirement.txt is for railway, so it knows what to install
