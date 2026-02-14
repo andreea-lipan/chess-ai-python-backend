@@ -212,20 +212,20 @@ def detect_pieces(piece_model, rectified_path):
         logger.info(f"Piece detection complete: {len(results['predictions'])} pieces found")
 
         # Class mapping for AI alg mine
-        class_map = {
-            0: "black-bishop",
-            1: "black-king",
-            2: "black-knight",
-            3: "black-pawn",
-            4: "black-queen",
-            5: "black-rook",
-            6: "white-bishop",
-            7: "white-king",
-            8: "white-knight",
-            9: "white-pawn",
-            10: "white-queen",
-            11: "white-rook",
-        }
+        # class_map = {
+        #     0: "black-bishop",
+        #     1: "black-king",
+        #     2: "black-horse",
+        #     3: "black-pawn",
+        #     4: "black-queen",
+        #     5: "black-rook",
+        #     6: "white-bishop",
+        #     7: "white-king",
+        #     8: "white-horse",
+        #     9: "white-pawn",
+        #     10: "white-queen",
+        #     11: "white-rook",
+        # }
 
         # Class mapping for AI alg 1
         # class_map = {
@@ -258,6 +258,20 @@ def detect_pieces(piece_model, rectified_path):
         #     "White-queen": "White-Queen",
         #     "White-rook": "White-Rook",
         # }
+        class_map = {
+            "black-bishop": "black-bishop",
+            "black-king": "black-king",
+            "black-horse": "black-horse",
+            "black-pawn": "black-pawn",
+            "black-queen": "black-queen",
+            "black-rook": "black-rook",
+            "white-bishop": "white-bishop",
+            "white-king": "white-king",
+            "white-horse": "white-horse",
+            "white-pawn": "white-pawn",
+            "white-queen": "white-queen",
+            "white-rook": "white-rook",
+        }
 
         # Add class names to predictions
         for i, res in enumerate(results["predictions"]):
