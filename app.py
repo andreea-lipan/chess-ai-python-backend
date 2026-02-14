@@ -277,15 +277,16 @@ def detect_pieces(piece_model, rectified_path):
         for i, res in enumerate(results["predictions"]):
             class_id = res['class']
             # Code req for AI alg 1 mapping bc it's not strings
-            if isinstance(class_id, str) and class_id.isdigit():
-                class_id = int(class_id)
-
-            if isinstance(class_id, int) and class_id in class_map:
-                res['class_name'] = class_map[class_id]
-                logger.debug(f"Piece {i + 1}: {class_map[class_id]} at ({res['x']:.1f}, {res['y']:.1f})")
-            else:
-                res['class_name'] = f"Unknown-{class_id}"
-                logger.warning(f"Unknown class ID: {class_id}")
+            # if isinstance(class_id, str) and class_id.isdigit():
+            #     class_id = int(class_id)
+            #
+            # if isinstance(class_id, int) and class_id in class_map:
+            #     res['class_name'] = class_map[class_id]
+            #     logger.debug(f"Piece {i + 1}: {class_map[class_id]} at ({res['x']:.1f}, {res['y']:.1f})")
+            # else:
+            #     res['class_name'] = f"Unknown-{class_id}"
+            #     logger.warning(f"Unknown class ID: {class_id}")
+            res['class_name'] = class_map[class_id]
 
         logger.info("✓ Piece detection complete")
         return results["predictions"]
