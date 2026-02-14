@@ -327,10 +327,10 @@ def label_to_symbol(label):
     #     "Black-Rook": "r", "Black-Queen": "q", "Black-King": "k",
     # }
     mapping = {
-        "white-Pawn": "P", "white-Knight": "N", "white-Bishop": "B",
-        "white-Rook": "R", "white-Queen": "Q", "white-King": "K",
-        "black-Pawn": "p", "black-Knight": "n", "black-Bishop": "b",
-        "black-Rook": "r", "black-Queen": "q", "black-King": "k",
+        "white-pawn": "P", "white-knight": "N", "white-bishop": "B",
+        "white-rook": "R", "white-queen": "Q", "white-king": "K",
+        "black-pawn": "p", "black-knight": "n", "black-bishop": "b",
+        "black-rook": "r", "black-queen": "q", "black-king": "k",
     }
 
     return mapping.get(label, None)
