@@ -320,11 +320,17 @@ def label_to_symbol(label):
     if label == "empty":
         return None
 
+    # mapping = {
+    #     "White-Pawn": "P", "White-Knight": "N", "White-Bishop": "B",
+    #     "White-Rook": "R", "White-Queen": "Q", "White-King": "K",
+    #     "Black-Pawn": "p", "Black-Knight": "n", "Black-Bishop": "b",
+    #     "Black-Rook": "r", "Black-Queen": "q", "Black-King": "k",
+    # }
     mapping = {
-        "White-Pawn": "P", "White-Knight": "N", "White-Bishop": "B",
-        "White-Rook": "R", "White-Queen": "Q", "White-King": "K",
-        "Black-Pawn": "p", "Black-Knight": "n", "Black-Bishop": "b",
-        "Black-Rook": "r", "Black-Queen": "q", "Black-King": "k",
+        "white-Pawn": "P", "white-Knight": "N", "white-Bishop": "B",
+        "white-Rook": "R", "white-Queen": "Q", "white-King": "K",
+        "black-Pawn": "p", "black-Knight": "n", "black-Bishop": "b",
+        "black-Rook": "r", "black-Queen": "q", "black-King": "k",
     }
 
     return mapping.get(label, None)
